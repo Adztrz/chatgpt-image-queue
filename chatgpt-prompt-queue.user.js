@@ -1,6 +1,7 @@
 // ==UserScript==
 // @name         ChatGPT Prompt Queue
 // @namespace    adztrz
+// @license      MIT
 // @version      1.1
 // @description  Paste a list of prompts; each one is sent after the previous reply or image has finished.
 // @match        https://chatgpt.com/*
