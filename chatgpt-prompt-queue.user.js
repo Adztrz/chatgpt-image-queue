@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         ChatGPT Prompt Queue
+// @name         ChatGPT Image Queue
 // @namespace    adztrz
 // @license      MIT
-// @version      1.1
+// @version      2.0
 // @description  Paste a list of prompts; each one is sent after the previous reply or image has finished.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -49,6 +49,7 @@
     idx: GM_getValue('idx', 0),
     running: false,
     note: '',
+    bad: false,
   };
   if (GM_getValue('running', false)) state.note = 'Paused because the page reloaded. Press Start to continue.';
   const save = () => { GM_setValue('queue', state.queue); GM_setValue('idx', state.idx); GM_setValue('running', state.running); };
@@ -139,7 +140,7 @@
 
       const before = turnCount();
       const err = await sendPrompt(state.queue[state.idx]);
-      if (err) return pause(`${err} Press Check page and tell Claude what it says.`);
+      if (err) return pause(`${err} Press Check and tell Claude what it says.`);
       state.idx++; save(); render();
       setStatus(`Sent ${state.idx} of ${state.queue.length}. Waiting for the reply…`);
       await waitFor(() => !state.running || busy() || turnCount() > before, CFG.startWaitMs);
@@ -153,75 +154,189 @@
     }
   }
 
-  function pause(msg) {
+  function pause(msg, bad = true) {
     state.running = false; save(); render();
-    setStatus(msg);
-    notify(msg);
+    setStatus(msg, bad);
+    if (bad) notify(msg);
   }
   function notify(text) {
-    try { GM_notification({ title: 'Prompt queue', text, timeout: 8000 }); } catch (_) { /* notifications off */ }
+    try { GM_notification({ title: 'Image queue', text, timeout: 8000 }); } catch (_) { /* notifications off */ }
   }
 
-  // ---------- panel (built without innerHTML, styled in JS, so ChatGPT's page rules don't block it) ----------
+  // ---------- panel: Faust's look (near-black cards, hairlines, bone primary, uppercase tags with a dot) ----------
+  // Built without innerHTML and styled in JS, so ChatGPT's page rules don't block it.
+  const C = {
+    canvas: '#07090b', card: '#090b0c', raised: '#1a1d1e', divider: '#262727', border: '#363738', rule: '#696a68',
+    strong: '#efefed', bone: '#e9e1dc', text: '#b3b0af', muted: '#8a8b8a', faint: '#565858', alert: '#f12614', positive: '#55bc82',
+  };
+  const SANS = '"Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif';
+  const MONO = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
+  const EASE = 'cubic-bezier(0.4, 0, 0.2, 1)';
+  const CARD_SHADOW = `inset 0 0 0 1px ${C.divider}, 0 1px 0 rgba(255,255,255,.02), 0 12px 32px rgba(0,0,0,.55)`;
+
   const el = (tag, style, text) => { const e = document.createElement(tag); Object.assign(e.style, style || {}); if (text) e.textContent = text; return e; };
-  const btnStyle = { padding: '6px 10px', borderRadius: '8px', border: '1px solid #555', background: '#2a2a2a', color: '#eee', cursor: 'pointer', font: '13px system-ui' };
+  const hover = (e, on, off) => { e.addEventListener('mouseenter', () => !e.disabled && Object.assign(e.style, on)); e.addEventListener('mouseleave', () => Object.assign(e.style, off)); };
 
-  const toggle = el('button', { ...btnStyle, position: 'fixed', right: '16px', bottom: '90px', zIndex: 99999 }, 'Queue');
+  // buttons: 32px, 8px corners, hairline edge; the one primary action is bone
+  function button(label, kind = 'plain') {
+    const base = {
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', height: '30px', padding: '0 12px', boxSizing: 'border-box',
+      width: 'auto', minWidth: '0', margin: '0', flex: 'none', textTransform: 'none', letterSpacing: 'normal', // ignore the page's own button styles
+      borderRadius: '8px', cursor: 'pointer', whiteSpace: 'nowrap', font: `500 13px/1 ${SANS}`, transition: `border-color .15s ${EASE}, background .15s ${EASE}, color .15s ${EASE}`,
+    };
+    const look = {
+      plain: { background: 'transparent', border: `1px solid ${C.border}`, color: C.strong },
+      primary: { background: C.bone, border: `1px solid ${C.bone}`, color: C.canvas, boxShadow: '0 1px 3px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.5)' },
+      ghost: { background: 'transparent', border: '1px solid transparent', color: C.muted, padding: '0 8px' },
+    }[kind];
+    const b = el('button', { ...base, ...look }, label);
+    b.type = 'button';
+    if (kind === 'primary') hover(b, { background: C.strong, borderColor: C.strong }, { background: C.bone, borderColor: C.bone });
+    else if (kind === 'ghost') hover(b, { color: C.strong, borderColor: C.border }, { color: C.muted, borderColor: 'transparent' });
+    else hover(b, { borderColor: C.rule, background: 'rgba(255,255,255,.03)' }, { borderColor: C.border, background: 'transparent' });
+    return b;
+  }
+  // "tag with dot": uppercase label, wide tracking, a small dot, no box
+  function tag(text, dot = C.bone, color = C.muted) {
+    const t = el('span', { display: 'inline-flex', alignItems: 'center', gap: '7px', font: `600 11px/1 ${SANS}`, letterSpacing: '.1em', textTransform: 'uppercase', color });
+    const d = el('i', { width: '6px', height: '6px', borderRadius: '50%', background: dot, flex: 'none', display: 'inline-block' });
+    t.append(d, document.createTextNode(text));
+    t.dot = d;
+    return t;
+  }
+  const pulse = (e) => e.animate([{ opacity: 1 }, { opacity: .25 }, { opacity: 1 }], { duration: 1600, iterations: Infinity, easing: 'ease-in-out' });
+
+  // the launcher: a quiet button with the progress in it
+  const toggle = button('', 'plain');
+  Object.assign(toggle.style, { position: 'fixed', right: '16px', bottom: '96px', zIndex: 99999, gap: '8px', background: C.card, boxShadow: '0 4px 16px rgba(0,0,0,.45)' });
+  hover(toggle, { borderColor: C.rule, background: C.raised }, { borderColor: C.border, background: C.card });
+  const toggleTag = tag('Queue', C.bone, C.strong);
+  const toggleCount = el('span', { font: `500 12px/1 ${MONO}`, color: C.muted });
+  toggle.append(toggleTag, toggleCount);
+
   const panel = el('div', {
-    position: 'fixed', right: '16px', bottom: '130px', zIndex: 99999, width: '340px', padding: '12px',
-    borderRadius: '12px', background: '#1b1b1b', color: '#eee', border: '1px solid #444',
-    boxShadow: '0 8px 30px rgba(0,0,0,.4)', font: '13px system-ui', display: 'none',
+    position: 'fixed', right: '16px', bottom: '138px', zIndex: 99999, width: '412px', maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box',
+    padding: '20px', borderRadius: '8px', background: C.card, color: C.text, boxShadow: CARD_SHADOW, font: `400 13px/1.45 ${SANS}`, display: 'none',
   });
-  const title = el('div', { fontWeight: '600', marginBottom: '6px' }, 'Prompt queue (one prompt per line)');
-  const area = el('textarea', {
-    width: '100%', height: '140px', boxSizing: 'border-box', resize: 'vertical', padding: '8px',
-    borderRadius: '8px', border: '1px solid #555', background: '#111', color: '#eee', font: '12px ui-monospace, monospace',
-  });
-  area.placeholder = '1. First prompt\n2. Second prompt\n…';
-  const row = el('div', { display: 'flex', gap: '6px', flexWrap: 'wrap', margin: '8px 0' });
-  const bLoad = el('button', btnStyle, 'Load');
-  const bStart = el('button', btnStyle, 'Start');
-  const bPause = el('button', btnStyle, 'Pause');
-  const bSkip = el('button', btnStyle, 'Skip next');
-  const bClear = el('button', btnStyle, 'Clear');
-  const bCheck = el('button', btnStyle, 'Check page');
-  const count = el('div', { color: '#bbb' });
-  const status = el('div', { color: '#9cf', marginTop: '4px', minHeight: '1.2em' });
-  const nextLine = el('div', { color: '#888', marginTop: '4px', overflowWrap: 'anywhere' });
 
-  row.append(bLoad, bStart, bPause, bSkip, bClear, bCheck);
-  panel.append(title, area, row, count, nextLine, status);
+  // header: tag on the left, count pill on the right
+  const header = el('div', { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' });
+  const headTag = tag('Image queue');
+  const pill = el('span', { minWidth: '20px', padding: '2px 8px', borderRadius: '9999px', background: 'rgba(255,255,255,.05)', font: `500 11px/1.4 ${MONO}`, color: C.muted, textAlign: 'center' });
+  header.append(headTag, pill);
+
+  // edit view: paste prompts, see how many were found
+  const editView = el('div');
+  const area = el('textarea', {
+    width: '100%', height: '150px', boxSizing: 'border-box', resize: 'vertical', padding: '10px 12px', borderRadius: '8px',
+    border: `1px solid ${C.border}`, background: C.raised, color: C.strong, font: `400 12px/1.55 ${MONO}`, outline: 'none',
+    transition: `border-color .15s ${EASE}`,
+  });
+  area.placeholder = 'Paste prompts, one per line.\n1. A single red rose…\n2. Three pastel eggs…';
+  area.addEventListener('focus', () => { area.style.borderColor = C.rule; });
+  area.addEventListener('blur', () => { area.style.borderColor = C.border; });
+  const found = el('div', { margin: '8px 0 14px', fontSize: '12px', color: C.muted });
+  const editRow = el('div', { display: 'flex', gap: '8px', justifyContent: 'flex-end' });
+  const bCancel = button('Cancel', 'ghost');
+  const bLoad = button('Load prompts', 'primary');
+  editRow.append(bCancel, bLoad);
+  editView.append(area, found, editRow);
+
+  // queue view: each prompt is its own card, spaced apart
+  const queueView = el('div');
+  const list = el('ol', { listStyle: 'none', margin: '0 -4px 0 0', padding: '0 4px 0 0', display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '46vh', overflowY: 'auto' });
+  const status = el('div', { margin: '14px 0', minHeight: '18px', fontSize: '12px', lineHeight: '1.4', color: C.muted });
+  const row = el('div', { display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' });
+  const bStart = button('Start', 'primary');
+  const bPause = button('Pause');
+  const bSkip = button('Skip');
+  bSkip.title = 'Skip the next prompt';
+  const spacer = el('span', { flex: '1' });
+  const bEdit = button('Edit', 'ghost');
+  const bCheck = button('Check', 'ghost');
+  bCheck.title = 'Show what the script can find on this page';
+  const bClear = button('Clear', 'ghost');
+  row.append(bStart, bPause, bSkip, spacer, bEdit, bCheck, bClear);
+  queueView.append(list, status, row);
+
+  panel.append(header, editView, queueView);
   document.body.append(toggle, panel);
 
-  function setStatus(t) { state.note = t; status.textContent = t; }
-  function render() {
-    count.textContent = state.queue.length ? `${state.idx} of ${state.queue.length} sent` : 'No prompts loaded.';
-    const next = state.queue[state.idx];
-    nextLine.textContent = next ? `Next: ${next.slice(0, 120)}${next.length > 120 ? '…' : ''}` : '';
-    bStart.disabled = state.running || state.idx >= state.queue.length;
-    bPause.disabled = !state.running;
-    bSkip.disabled = state.idx >= state.queue.length;
-    bLoad.disabled = bClear.disabled = state.running;
-    for (const b of [bLoad, bStart, bPause, bSkip, bClear]) b.style.opacity = b.disabled ? '.45' : '1';
-    status.textContent = state.note;
+  let editing = !state.queue.length;
+  let pulseAnim = null;
+
+  function setStatus(t, bad = false) { state.note = t; state.bad = bad; status.textContent = t; status.style.color = bad ? C.alert : C.muted; }
+
+  function card(text, i) {
+    const sent = i < state.idx, next = i === state.idx, working = state.running && i === state.idx - 1;
+    const li = el('li', {
+      display: 'grid', gridTemplateColumns: '28px 1fr', gap: '4px 10px', padding: '12px 14px', borderRadius: '8px',
+      background: next ? C.raised : C.card, boxShadow: `inset 0 0 0 1px ${next ? C.rule : C.divider}`,
+      opacity: sent && !working ? '.55' : '1', transition: `opacity .2s ${EASE}, box-shadow .2s ${EASE}`,
+    });
+    const num = el('span', { gridRow: 'span 2', font: `500 12px/18px ${MONO}`, color: next ? C.strong : C.faint }, String(i + 1).padStart(2, '0'));
+    const label = working ? tag('Generating', C.bone, C.strong)
+      : sent ? tag('Sent', C.positive)
+      : next ? tag(state.running ? 'Up next' : 'Next', C.bone, C.strong)
+      : tag('Queued', C.faint, C.faint);
+    if (working) pulseAnim = pulse(label.dot);
+    const body = el('p', {
+      margin: '0', color: sent ? C.muted : C.text, fontSize: '13px', lineHeight: '1.5', overflowWrap: 'anywhere',
+      display: '-webkit-box', WebkitLineClamp: '3', WebkitBoxOrient: 'vertical', overflow: 'hidden', cursor: 'pointer',
+    }, text);
+    body.title = 'Click to show or hide the whole prompt';
+    body.onclick = () => { const open = body.style.webkitLineClamp === 'unset'; body.style.webkitLineClamp = open ? '3' : 'unset'; };
+    li.append(num, label, body);
+    return li;
   }
 
-  toggle.onclick = () => { panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; };
+  function render() {
+    const n = state.queue.length;
+    pill.textContent = n ? `${state.idx} / ${n}` : '0';
+    toggleCount.textContent = n ? `${state.idx}/${n}` : '';
+    toggleTag.dot.style.background = state.running ? C.positive : C.bone;
+
+    editView.style.display = editing ? 'block' : 'none';
+    queueView.style.display = editing ? 'none' : 'block';
+    bCancel.style.display = n ? 'inline-flex' : 'none';
+    const cnt = parse(area.value).length;
+    found.textContent = cnt ? `${cnt} prompt${cnt === 1 ? '' : 's'} found` : 'One prompt per line. Numbers like "1." are removed.';
+    bLoad.disabled = !cnt;
+
+    if (pulseAnim) { pulseAnim.cancel(); pulseAnim = null; }
+    list.replaceChildren(...state.queue.map(card));
+    const cur = list.children[Math.min(state.idx, n - 1)];
+    if (cur && panel.style.display !== 'none') cur.scrollIntoView({ block: 'nearest' });
+
+    bStart.textContent = state.running ? 'Running' : state.idx > 0 && state.idx < n ? 'Resume' : 'Start';
+    bStart.disabled = state.running || state.idx >= n;
+    bPause.disabled = !state.running;
+    bSkip.disabled = state.running || state.idx >= n;
+    bEdit.disabled = bClear.disabled = state.running;
+    for (const b of [bLoad, bStart, bPause, bSkip, bEdit, bClear]) { b.style.opacity = b.disabled ? '.4' : '1'; b.style.cursor = b.disabled ? 'default' : 'pointer'; }
+    setStatus(state.note || (n && state.idx >= n ? `Done: all ${n} prompts sent.` : n ? 'Ready. Leave the chat box alone while it runs.' : ''), state.bad);
+  }
+
+  toggle.onclick = () => { panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; render(); };
+  area.addEventListener('input', render);
   bLoad.onclick = () => {
-    const list = parse(area.value);
-    if (!list.length) return setStatus('Paste at least one prompt first.');
-    state.queue = list; state.idx = 0; save();
-    setStatus(`Loaded ${list.length} prompts. Press Start.`); render();
+    const l = parse(area.value);
+    if (!l.length) return;
+    state.queue = l; state.idx = 0; state.note = ''; save();
+    editing = false; render();
+    setStatus(`Loaded ${l.length} prompts. Press Start.`);
   };
+  bCancel.onclick = () => { editing = false; render(); };
+  bEdit.onclick = () => { if (state.running) return; area.value = state.queue.slice(state.idx).join('\n'); editing = true; render(); area.focus(); };
   bStart.onclick = () => {
     if (state.running || state.idx >= state.queue.length) return;
     state.running = true; save(); render();
     setStatus('Starting…');
     run().catch((e) => pause(`Stopped: ${e && e.message ? e.message : e}`));
   };
-  bPause.onclick = () => pause('Paused. Press Start to continue from the next prompt.');
-  bSkip.onclick = () => { if (state.idx < state.queue.length) { state.idx++; save(); render(); } };
-  bClear.onclick = () => { state.queue = []; state.idx = 0; save(); setStatus(''); render(); };
+  bPause.onclick = () => pause('Paused. Press Resume to continue from the next prompt.', false);
+  bSkip.onclick = () => { if (!state.running && state.idx < state.queue.length) { state.idx++; save(); state.note = ''; render(); } };
+  bClear.onclick = () => { if (state.running) return; state.queue = []; state.idx = 0; state.note = ''; save(); area.value = ''; editing = true; render(); };
   // Reports what the script can see, so a broken selector is easy to spot.
   bCheck.onclick = () => {
     const box = findInput(), send = findSend();

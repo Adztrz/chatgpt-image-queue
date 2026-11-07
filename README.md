@@ -4,6 +4,6 @@ A Tampermonkey userscript that queues image prompts in ChatGPT. Paste a list, an
 
 **Install:** in Tampermonkey's dashboard, click **+**, replace the editor's contents with the file, save, then reload ChatGPT.
 
-**Use:** click **Queue**, paste one prompt per line, click **Load**, then **Start**. Don't type in the chat box while it runs.
+**Use:** click **Queue**, paste one prompt per line, click **Load prompts**, then **Start**. Each prompt gets its own card showing whether it's queued, next, generating or sent; click a card's text to see the whole prompt. Don't type in the chat box while it runs.
 
-It pauses on a limit message, a reply over 8 minutes, a page reload, or if it can't send. **Check page** shows what the script can find, for when ChatGPT changes its page.
+It pauses on a limit message, a reply over 8 minutes, a page reload, or if it can't send. **Check** shows what the script can find, for when ChatGPT changes its page.
