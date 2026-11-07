@@ -1,8 +1,6 @@
-# Tampermonkey scripts
+# ChatGPT Tampermonkey Image Queue
 
-## ChatGPT Prompt Queue
-
-`chatgpt-prompt-queue.user.js` sends a list of prompts to ChatGPT one at a time, each after the previous reply or image has finished.
+A Tampermonkey userscript that queues image prompts in ChatGPT. Paste a list, and `chatgpt-prompt-queue.user.js` sends them one at a time, each after the previous image has finished.
 
 **Install:** in Tampermonkey's dashboard, click **+**, replace the editor's contents with the file, save, then reload ChatGPT.
 
