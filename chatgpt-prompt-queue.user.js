@@ -2,7 +2,7 @@
 // @name         ChatGPT Image Queue
 // @namespace    adztrz
 // @license      MIT
-// @version      2.0
+// @version      2.1
 // @description  Paste a list of prompts; each one is sent after the previous reply or image has finished.
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
@@ -10,6 +10,9 @@
 // @grant        GM_setValue
 // @grant        GM_notification
 // @run-at       document-idle
+// @homepageURL  https://github.com/Adztrz/chatgpt-image-queue
+// @updateURL    https://raw.githubusercontent.com/Adztrz/chatgpt-image-queue/main/chatgpt-prompt-queue.user.js
+// @downloadURL  https://raw.githubusercontent.com/Adztrz/chatgpt-image-queue/main/chatgpt-prompt-queue.user.js
 // ==/UserScript==
 
 (function () {
